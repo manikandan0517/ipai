@@ -37,7 +37,7 @@ jobs:
           FUNCTION_NAME: inspect_point_ai_dataintegration
           IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
           AWS_REGION: ${{ vars.REGION }}
-          LAMBDA_ROLE_ARN: ${{ vars.LAMBDA_ROLE_ARN }}
+          LAMBDA_ROLE_ARN: ${{ vars.ROLE }}
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
           echo "AWS Account ID: $ACCOUNT_ID"
