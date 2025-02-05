@@ -55,7 +55,7 @@ jobs:
             else
               aws lambda create-function \
                 --function-name $FUNCTION_NAME \
-                --role arn:aws:iam::$ACCOUNT_ID:role/${{ vars.ROLE }} \
+                --role arn:aws:iam::$ACCOUNT_ID:role/man123 \
                 --package-type Image \
                 --code ImageUri=$IMAGE_URI \
                 --environment Variables="{OPENAI_API_KEY=placeholder,MODEL=placeholder,POSTGRES_DATABASE=placeholder,POSTGRES_HOST=placeholder,POSTGRES_PORT=placeholder,POSTGRES_USER=placeholder,POSTGRES_PASSWORD=placeholder,AWS_STORAGE_BUCKET_NAME=placeholder,AWS_S3_REGION_NAME=placeholder,AWS_ACCESS_KEY_ID_=placeholder,AWS_SECRET_ACCESS_KEY_=placeholder}" \
