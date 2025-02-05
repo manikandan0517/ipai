@@ -42,7 +42,7 @@ jobs:
       - name: Deploy Lambda Function
         env:
           FUNCTION_NAME: inspect_point_ai_dataintegration
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
           AWS_REGION: ${{ vars.REGION}}
         run: |
           echo "Deploying Lambda function with retries..."
