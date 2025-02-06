@@ -42,3 +42,4 @@ def lambda_handler(event, context):
             results.append({"id": pdf_id, "status": "Failed", "error": str(e)})
 
     return {"statusCode": 200, "body": json.dumps({"processed": results})}
+

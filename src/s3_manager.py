@@ -17,7 +17,7 @@ class S3Manager:
         local_path = f"/tmp/{os.path.basename(key)}"
         try:
             with open(local_path, "wb") as f:
-                self.s3_client.download_file(self.bucket_name, key, f)
+                self.s3_client.download_fileobj(self.bucket_name, key, f)
             return local_path
         except ClientError as e:
             if e.response['Error']['Code'] == '403':
