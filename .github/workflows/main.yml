@@ -1,13 +1,16 @@
 name: inspect_point_ai_dataintegration
+
 on:
   push:
     branches:
       - main
+
 jobs:
   docker_cicd:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -22,6 +25,27 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Delete Existing ECR Image (If Exists)
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Checking and deleting existing ECR image if it exists..."
+          IMAGE_DIGEST=$(aws ecr list-images \
+            --repository-name $REPOSITORY \
+            --query "imageIds[?imageTag=='$IMAGE_TAG'].imageDigest" \
+            --output text)
+
+          if [ -n "$IMAGE_DIGEST" ]; then
+            echo "Deleting existing image with digest: $IMAGE_DIGEST"
+            aws ecr batch-delete-image \
+              --repository-name $REPOSITORY \
+              --image-ids imageDigest=$IMAGE_DIGEST
+          else
+            echo "No existing image found with tag: $IMAGE_TAG"
+          fi
 
       - name: Build, Tag, and Push Docker Image
         env:
