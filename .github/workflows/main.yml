@@ -117,8 +117,9 @@ jobs:
             --statement-id s3-trigger \
             --action lambda:InvokeFunction \
             --principal s3.amazonaws.com \
-            --source-arn arn:aws:s3:::$S3_BUCKET_NAME \
-            --source-account $ACCOUNT_ID || echo "Permission already exists."
+            --source-arn arn:aws:s3:::${S3_BUCKET_NAME} \
+            --source-account $ACCOUNT_ID \
+            --region $AWS_REGION || echo "Permission already exists."
 
           echo "Fetching Lambda ARN dynamically..."
           LAMBDA_ARN=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.FunctionArn' --output text)
