@@ -163,3 +163,4 @@ jobs:
           if [ $SUCCESS -eq 0 ]; then
             echo "Failed to add S3 trigger after $MAX_ATTEMPTS attempts. Exiting."
             exit 1
+          fi
