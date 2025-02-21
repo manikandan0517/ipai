@@ -9,123 +9,133 @@ jobs:
   docker_cicd:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      id-token: write   
+      contents: read  
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (Access Keys)
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: GitHubActionsSession
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Delete Existing ECR Image (If Exists)
+      - name: Delete Existing ECR Images
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-          IMAGE_TAG: ${{ github.sha }}
+          REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
         run: |
-          echo "Checking and deleting existing ECR image if it exists..."
-          IMAGE_DIGEST=$(aws ecr list-images \
-            --repository-name $REPOSITORY \
-            --query "imageIds[?imageTag=='$IMAGE_TAG'].imageDigest" \
-            --output text)
-
-          if [ -n "$IMAGE_DIGEST" ]; then
-            echo "Deleting existing image with digest: $IMAGE_DIGEST"
-            aws ecr batch-delete-image \
-              --repository-name $REPOSITORY \
-              --image-ids imageDigest=$IMAGE_DIGEST
+          echo "Deleting all existing ECR images..."
+          IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY --query 'imageIds[*]' --output json)
+          if [ "$IMAGE_IDS" != "[]" ]; then
+            aws ecr batch-delete-image --repository-name $REPOSITORY --image-ids "$IMAGE_IDS"
+            echo "All existing images deleted."
           else
-            echo "No existing image found with tag: $IMAGE_TAG"
+            echo "No images to delete."
           fi
 
       - name: Build, Tag, and Push Docker Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "Building and pushing Docker image with retries..."
-          retries=3
-          for attempt in $(seq 1 $retries); do
-            docker build -f ./code/Dockerfile -t $REGISTRY/$REPOSITORY:$IMAGE_TAG ./code && \
-            docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG && break
-            echo "Attempt $attempt of $retries failed. Retrying in 10 seconds..."
-            sleep 10
-          done
+          echo "Building Docker image..."
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          echo "Pushing Docker image to Amazon ECR..."
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
 
       - name: Deploy Lambda Function
         env:
-          FUNCTION_NAME: inspect_point_ai_dataintegration
-          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
-          AWS_REGION: ${{ vars.REGION }}
-          LAMBDA_ROLE_ARN: ${{ vars.ROLE }}
+          FUNCTION_NAME: inspect_point_ai_dataintegration2
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:${{ github.sha }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
         run: |
-          echo "Deploying Lambda function with retries..."
-          retries=3
-          for attempt in $(seq 1 $retries); do
-            ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
-            echo "AWS Account ID: $ACCOUNT_ID"
+          echo "Retrieving AWS Account ID..."
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          echo "AWS Account ID: $ACCOUNT_ID"
+
+          echo "Checking if Lambda function exists..."
+          ATTEMPTS=0
+          MAX_ATTEMPTS=5
+          while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
             if aws lambda get-function --function-name $FUNCTION_NAME; then
-              aws lambda update-function-code --function-name $FUNCTION_NAME --image-uri $IMAGE_URI && break
+              echo "Function exists. Updating..."
+              if aws lambda update-function-code --function-name $FUNCTION_NAME --image-uri $IMAGE_URI; then
+                echo "Lambda function updated successfully."
+                break
+              else
+                echo "Update failed, retrying in 5 seconds..."
+                ATTEMPTS=$((ATTEMPTS+1))
+                sleep 5
+              fi
             else
-              aws lambda create-function \
+              echo "Function does not exist. Creating..."
+              if aws lambda create-function \
                 --function-name $FUNCTION_NAME \
-                --role $LAMBDA_ROLE_ARN \
+                --role $AWS_ROLE_ARN \
                 --package-type Image \
-                --code ImageUri=$IMAGE_URI \
-                --environment Variables="{OPENAI_API_KEY=placeholder,MODEL=placeholder,POSTGRES_DATABASE=placeholder,POSTGRES_HOST=placeholder,POSTGRES_PORT=placeholder,POSTGRES_USER=placeholder,POSTGRES_PASSWORD=placeholder,AWS_STORAGE_BUCKET_NAME=placeholder,AWS_S3_REGION_NAME=placeholder,AWS_ACCESS_KEY_ID_=placeholder,AWS_SECRET_ACCESS_KEY_=placeholder}" \
+                --code '{"ImageUri":"'"$IMAGE_URI"'"}' \
                 --timeout 900 \
                 --memory-size 1024 \
-                --region $AWS_REGION && break
+                --region $AWS_REGION; then
+                echo "Lambda function created successfully."
+                break
+              else
+                echo "Creation failed, retrying in 5 seconds..."
+                ATTEMPTS=$((ATTEMPTS+1))
+                sleep 5
+              fi
             fi
-            echo "Attempt $attempt of $retries failed. Retrying in 10 seconds..."
-            sleep 10
           done
+
+          if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
+            echo "Max retries reached. Exiting with failure."
+            exit 1
+          fi
 
       - name: Add S3 Trigger
         env:
           FUNCTION_NAME: inspect_point_ai_dataintegration
-          S3_BUCKET_NAME: ${{ vars.BUCKET_NAME }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
           S3_EVENT_SUFFIX: .pdf
-          AWS_REGION: ${{ vars.REGION }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
-          echo "Adding S3 trigger with retries..."
-          retries=3
-          for attempt in $(seq 1 $retries); do
-            ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
-            aws lambda add-permission \
-              --function-name $FUNCTION_NAME \
-              --statement-id s3-trigger \
-              --action lambda:InvokeFunction \
-              --principal s3.amazonaws.com \
-              --source-arn arn:aws:s3:::$S3_BUCKET_NAME \
-              --source-account $ACCOUNT_ID || echo "Permission already exists."
-            aws s3api put-bucket-notification-configuration \
-              --bucket $S3_BUCKET_NAME \
-              --notification-configuration '{
-                "LambdaFunctionConfigurations": [
-                  {
-                    "LambdaFunctionArn": "arn:aws:lambda:'"$AWS_REGION"':'"$ACCOUNT_ID"':function:'"$FUNCTION_NAME"'",
-                    "Events": ["s3:ObjectCreated:Put"],
-                    "Filter": {
-                      "Key": {
-                        "FilterRules": [
-                          {"Name": "suffix", "Value": ".pdf"}
-                        ]
-                      }
+          echo "Granting S3 permission to invoke the Lambda function..."
+          ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+          aws lambda add-permission \
+            --function-name $FUNCTION_NAME \
+            --statement-id s3-trigger \
+            --action lambda:InvokeFunction \
+            --principal s3.amazonaws.com \
+            --source-arn arn:aws:s3:::$S3_BUCKET_NAME \
+            --source-account $ACCOUNT_ID || echo "Permission already exists."
+
+          echo "Adding S3 trigger for bucket: $S3_BUCKET_NAME and suffix: $S3_EVENT_SUFFIX..."
+          aws s3api put-bucket-notification-configuration \
+            --bucket $S3_BUCKET_NAME \
+            --notification-configuration '{
+              "LambdaFunctionConfigurations": [
+                {
+                  "LambdaFunctionArn": "arn:aws:lambda:'"$AWS_REGION"':'"$ACCOUNT_ID"':function:'"$FUNCTION_NAME"'",
+                  "Events": ["s3:ObjectCreated:Put"],
+                  "Filter": {
+                    "Key": {
+                      "FilterRules": [
+                        {"Name": "suffix", "Value": ".pdf"}
+                      ]
                     }
                   }
-                ]
-              }' && break
-            echo "Attempt $attempt of $retries failed. Retrying in 10 seconds..."
-            sleep 10
-          done
+                }
+              ]
+            }'
+
+          echo "S3 trigger added successfully."
