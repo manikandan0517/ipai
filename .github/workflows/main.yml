@@ -1,4 +1,4 @@
-name: inspect_point_ai_dataintegration
+name: inspectpoint_ai_data-integration-lambda
 
 on:
   push:
@@ -54,7 +54,7 @@ jobs:
 
       - name: Deploy Lambda Function
         env:
-          FUNCTION_NAME: inspect_point_ai_dataintegration2
+          FUNCTION_NAME: inspectpoint-ai-data-integration-lambda
           IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:${{ github.sha }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
@@ -104,7 +104,7 @@ jobs:
 
       - name: Add S3 Trigger
         env:
-          FUNCTION_NAME: inspect_point_ai_dataintegration
+          FUNCTION_NAME: inspectpoint-ai-data-integration-lambda
           S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
           S3_EVENT_SUFFIX: .pdf
           AWS_REGION: ${{ secrets.AWS_REGION }}
