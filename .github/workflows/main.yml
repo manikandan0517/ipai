@@ -1,4 +1,4 @@
-name: inspectpoint_ai_data-integration-lambda
+name: inspectpoint-ai-data-integration-lambda
 
 on:
   push:
