@@ -1,0 +1,107 @@
+name: inspect_point_ai_dataintegration
+on:
+  push:
+    branches:
+      - main
+jobs:
+  docker_cicd:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (Access Keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Docker Image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Building and pushing Docker image with retries..."
+          retries=3
+          for attempt in $(seq 1 $retries); do
+            docker build -f ./code/Dockerfile -t $REGISTRY/$REPOSITORY:$IMAGE_TAG . && \
+            docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG && break
+            echo "Attempt $attempt of $retries failed. Retrying in 10 seconds..."
+            sleep 10
+          done
+
+      - name: Deploy Lambda Function
+        env:
+          FUNCTION_NAME: inspect_point_ai_dataintegration
+          IMAGE_URI: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+          AWS_REGION: ${{ vars.REGION }}
+          LAMBDA_ROLE_ARN: ${{ vars.ROLE }}
+        run: |
+          echo "Deploying Lambda function with retries..."
+          retries=3
+          for attempt in $(seq 1 $retries); do
+            ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+            echo "AWS Account ID: $ACCOUNT_ID"
+            if aws lambda get-function --function-name $FUNCTION_NAME; then
+              aws lambda update-function-code --function-name $FUNCTION_NAME --image-uri $IMAGE_URI && break
+            else
+              aws lambda create-function \
+                --function-name $FUNCTION_NAME \
+                --role $LAMBDA_ROLE_ARN \
+                --package-type Image \
+                --code ImageUri=$IMAGE_URI \
+                --environment Variables="{OPENAI_API_KEY=placeholder,MODEL=placeholder,POSTGRES_DATABASE=placeholder,POSTGRES_HOST=placeholder,POSTGRES_PORT=placeholder,POSTGRES_USER=placeholder,POSTGRES_PASSWORD=placeholder,AWS_STORAGE_BUCKET_NAME=placeholder,AWS_S3_REGION_NAME=placeholder,AWS_ACCESS_KEY_ID_=placeholder,AWS_SECRET_ACCESS_KEY_=placeholder}" \
+                --timeout 900 \
+                --memory-size 1024 \
+                --region $AWS_REGION && break
+            fi
+            echo "Attempt $attempt of $retries failed. Retrying in 10 seconds..."
+            sleep 10
+          done
+
+      - name: Add S3 Trigger
+        env:
+          FUNCTION_NAME: inspect_point_ai_dataintegration
+          S3_BUCKET_NAME: ${{ vars.BUCKET_NAME }}
+          S3_EVENT_SUFFIX: .pdf
+          AWS_REGION: ${{ vars.REGION }}
+        run: |
+          echo "Adding S3 trigger with retries..."
+          retries=3
+          for attempt in $(seq 1 $retries); do
+            ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+            aws lambda add-permission \
+              --function-name $FUNCTION_NAME \
+              --statement-id s3-trigger \
+              --action lambda:InvokeFunction \
+              --principal s3.amazonaws.com \
+              --source-arn arn:aws:s3:::$S3_BUCKET_NAME \
+              --source-account $ACCOUNT_ID || echo "Permission already exists."
+            aws s3api put-bucket-notification-configuration \
+              --bucket $S3_BUCKET_NAME \
+              --notification-configuration '{
+                "LambdaFunctionConfigurations": [
+                  {
+                    "LambdaFunctionArn": "arn:aws:lambda:'"$AWS_REGION"':'"$ACCOUNT_ID"':function:'"$FUNCTION_NAME"'",
+                    "Events": ["s3:ObjectCreated:Put"],
+                    "Filter": {
+                      "Key": {
+                        "FilterRules": [
+                          {"Name": "suffix", "Value": ".pdf"}
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }' && break
+            echo "Attempt $attempt of $retries failed. Retrying in 10 seconds..."
+            sleep 10
+          done
