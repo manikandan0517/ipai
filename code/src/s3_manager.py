@@ -23,7 +23,7 @@ class S3Manager:
             if e.response['Error']['Code'] == '403':
                 print(f"Permission error (403) downloading file {key} from S3: {e}")
             else:
-                print(f"Error downloading file {key} from S3: {e}")
+                print(f"Error downloading file from s3 {key} from S3: {e}")
             raise
 
     def upload_file(self, file_content: str, s3_key: str) -> str:
