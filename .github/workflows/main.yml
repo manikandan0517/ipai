@@ -32,7 +32,7 @@ jobs:
           echo "Building and pushing Docker image with retries..."
           retries=3
           for attempt in $(seq 1 $retries); do
-            docker build -f ./code/Dockerfile -t $REGISTRY/$REPOSITORY:$IMAGE_TAG . && \
+            docker build -f ./code/Dockerfile -t $REGISTRY/$REPOSITORY:$IMAGE_TAG ./code && \
             docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG && break
             echo "Attempt $attempt of $retries failed. Retrying in 10 seconds..."
             sleep 10
