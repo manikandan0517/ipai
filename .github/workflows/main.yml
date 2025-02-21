@@ -9,8 +9,8 @@ jobs:
   docker_cicd:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   
-      contents: read  
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout Code
@@ -102,7 +102,7 @@ jobs:
             exit 1
           fi
 
-      - name: Add S3 Trigger
+      - name: Add S3 Trigger with Retries
         env:
           FUNCTION_NAME: inspectpoint-ai-data-integration-lambda
           S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
@@ -111,6 +111,7 @@ jobs:
         run: |
           echo "Granting S3 permission to invoke the Lambda function..."
           ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+
           aws lambda add-permission \
             --function-name $FUNCTION_NAME \
             --statement-id s3-trigger \
@@ -119,23 +120,46 @@ jobs:
             --source-arn arn:aws:s3:::$S3_BUCKET_NAME \
             --source-account $ACCOUNT_ID || echo "Permission already exists."
 
+          echo "Fetching Lambda ARN dynamically..."
+          LAMBDA_ARN=$(aws lambda get-function --function-name $FUNCTION_NAME --query 'Configuration.FunctionArn' --output text)
+
+          echo "Waiting for permissions to propagate..."
+          sleep 15
+
           echo "Adding S3 trigger for bucket: $S3_BUCKET_NAME and suffix: $S3_EVENT_SUFFIX..."
-          aws s3api put-bucket-notification-configuration \
-            --bucket $S3_BUCKET_NAME \
-            --notification-configuration '{
-              "LambdaFunctionConfigurations": [
-                {
-                  "LambdaFunctionArn": "arn:aws:lambda:'"$AWS_REGION"':'"$ACCOUNT_ID"':function:'"$FUNCTION_NAME"'",
-                  "Events": ["s3:ObjectCreated:Put"],
-                  "Filter": {
-                    "Key": {
-                      "FilterRules": [
-                        {"Name": "suffix", "Value": ".pdf"}
-                      ]
+          
+          ATTEMPTS=0
+          MAX_ATTEMPTS=5
+          SUCCESS=0
+
+          while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+            if aws s3api put-bucket-notification-configuration \
+              --bucket $S3_BUCKET_NAME \
+              --notification-configuration '{
+                "LambdaFunctionConfigurations": [
+                  {
+                    "LambdaFunctionArn": "'"$LAMBDA_ARN"'",
+                    "Events": ["s3:ObjectCreated:Put"],
+                    "Filter": {
+                      "Key": {
+                        "FilterRules": [
+                          {"Name": "suffix", "Value": ".pdf"}
+                        ]
+                      }
                     }
                   }
-                }
-              ]
-            }'
+                ]
+              }'; then
+              echo "S3 trigger added successfully."
+              SUCCESS=1
+              break
+            else
+              echo "Failed to add S3 trigger, retrying in 10 seconds... (Attempt $((ATTEMPTS+1))/$MAX_ATTEMPTS)"
+              ATTEMPTS=$((ATTEMPTS+1))
+              sleep 10
+            fi
+          done
 
-          echo "S3 trigger added successfully."
+          if [ $SUCCESS -eq 0 ]; then
+            echo "Failed to add S3 trigger after $MAX_ATTEMPTS attempts. Exiting."
+            exit 1
